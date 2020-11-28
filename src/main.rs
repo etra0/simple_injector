@@ -12,5 +12,5 @@ fn main() {
     let dll_name = args.get(2).unwrap();
     let process = Process::new(&p_name).unwrap();
 
-    simple_injector::injector::inject_dll(&process, &dll_name);
+    simple_injector::inject_dll(&process, &dll_name);
 }
