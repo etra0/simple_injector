@@ -1,5 +1,7 @@
 use memory_rs::external::process::Process;
 use std::ffi::CString;
+use std::ffi::OsString;
+use std::os::windows::prelude::*;
 use std::mem;
 use std::ptr;
 use winapi::shared::basetsd::DWORD_PTR;
@@ -8,7 +10,7 @@ use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::libloaderapi::{FreeLibrary, GetModuleHandleA, GetProcAddress};
 use winapi::um::memoryapi::VirtualAllocEx;
 use winapi::um::processthreadsapi::CreateRemoteThread;
-use winapi::um::winbase::FormatMessageA;
+use winapi::um::winbase::FormatMessageW;
 use winapi::um::winnt::{MEM_COMMIT, PAGE_READWRITE};
 
 pub fn inject_dll(process: &Process, name: &str) {
@@ -54,8 +56,8 @@ pub fn inject_dll(process: &Process, name: &str) {
         println!("handle {:x?}", a);
 
         let last_err = GetLastError();
-        let mut buffer: Vec<i8> = vec![0; 64];
-        FormatMessageA(
+        let mut buffer: Vec<u16> = vec![0; 64];
+        FormatMessageW(
             0x1000,
             std::ptr::null(),
             last_err,
@@ -64,8 +66,10 @@ pub fn inject_dll(process: &Process, name: &str) {
             64,
             std::ptr::null_mut(),
         );
-        let buffer: Vec<u8> = mem::transmute(buffer);
-        let msg = String::from_utf8(buffer).unwrap();
+        let msg = OsString::from_wide(&buffer)
+            .into_string()
+            .unwrap_or("Couldn't parse the error string".to_string());
+
         println!("Error: {}", msg);
 
         FreeLibrary(module_handle);
