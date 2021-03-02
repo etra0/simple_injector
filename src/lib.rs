@@ -12,30 +12,33 @@ use winapi::um::winbase::FormatMessageA;
 use winapi::um::winnt::{MEM_COMMIT, PAGE_READWRITE};
 
 pub fn inject_dll(process: &Process, name: &str) {
-    let dll_dir = CString::new(name).unwrap();
-    let dll_dir_s = dll_dir.as_bytes_with_nul().len();
+    let dll_dir: Vec<u8> = name
+        .to_string()
+        .encode_utf16()
+        .flat_map(|x| vec![(x & 0xFF) as u8, ((x & 0xFF00) >> 8) as u8])
+        .collect();
 
     unsafe {
         // Load kernel32 module in order to get LoadLibraryA
         let s_module_handle = CString::new("Kernel32").unwrap();
         let module_handle = GetModuleHandleA(s_module_handle.as_ptr());
 
-        // Load LoadLibraryA function from kernel32 module
-        let s_loadlib = CString::new("LoadLibraryA").unwrap();
+        // Load LoadLibraryW function from kernel32 module
+        let s_loadlib = CString::new("LoadLibraryW").unwrap();
         let result = GetProcAddress(module_handle, s_loadlib.as_ptr());
+        assert!(result as usize != 0x0);
         let casted_function: extern "system" fn(LPVOID) -> u32 = mem::transmute(result);
 
         // Allocate the space to write the dll direction in the target process
         let addr = VirtualAllocEx(
             process.h_process,
             ptr::null_mut(),
-            dll_dir_s,
+            dll_dir.len(),
             MEM_COMMIT,
             PAGE_READWRITE,
         ) as DWORD_PTR;
 
-        let _dll_dir = dll_dir.into_bytes_with_nul();
-        process.write_aob(addr, &_dll_dir, true);
+        process.write_aob(addr, &dll_dir, true);
 
         println!("DLL address {:x}", addr);
 
