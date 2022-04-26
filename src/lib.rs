@@ -1,21 +1,25 @@
 use memory_rs::external::process::Process;
+use windows_sys::Win32::Foundation::GetLastError;
+use windows_sys::Win32::System::Diagnostics::Debug::FormatMessageW;
+use windows_sys::Win32::System::LibraryLoader::FreeLibrary;
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleA;
+use windows_sys::Win32::System::LibraryLoader::GetProcAddress;
+use windows_sys::Win32::System::Memory::MEM_COMMIT;
+use windows_sys::Win32::System::Memory::PAGE_READWRITE;
+use windows_sys::Win32::System::Memory::VirtualAllocEx;
+use windows_sys::Win32::System::Threading::CreateRemoteThread;
 use std::ffi::CString;
 use std::ffi::OsString;
+use std::ffi::c_void;
 use std::os::windows::prelude::*;
-use std::mem;
 use std::ptr;
-use winapi::shared::basetsd::DWORD_PTR;
-use winapi::shared::minwindef::LPVOID;
-use winapi::um::errhandlingapi::GetLastError;
-use winapi::um::libloaderapi::{FreeLibrary, GetModuleHandleA, GetProcAddress};
-use winapi::um::memoryapi::VirtualAllocEx;
-use winapi::um::processthreadsapi::CreateRemoteThread;
-use winapi::um::winbase::FormatMessageW;
-use winapi::um::winnt::{MEM_COMMIT, PAGE_READWRITE};
+use std::path::Path;
 
 pub fn inject_dll(process: &Process, name: &str) {
-    let dll_dir: Vec<u8> = name
-        .to_string()
+    let filepath = Path::new(name).canonicalize().unwrap();
+    let filepath = filepath.to_string_lossy();
+    let filepath = (&filepath[4..]).to_owned();
+    let dll_dir: Vec<u8> = filepath
         .encode_utf16()
         .flat_map(|x| vec![(x & 0xFF) as u8, ((x & 0xFF00) >> 8) as u8])
         .collect();
@@ -23,13 +27,11 @@ pub fn inject_dll(process: &Process, name: &str) {
     unsafe {
         // Load kernel32 module in order to get LoadLibraryA
         let s_module_handle = CString::new("Kernel32").unwrap();
-        let module_handle = GetModuleHandleA(s_module_handle.as_ptr());
+        let module_handle = GetModuleHandleA(s_module_handle.as_ptr() as _);
 
         // Load LoadLibraryW function from kernel32 module
         let s_loadlib = CString::new("LoadLibraryW").unwrap();
-        let result = GetProcAddress(module_handle, s_loadlib.as_ptr());
-        assert!(result as usize != 0x0);
-        let casted_function: extern "system" fn(LPVOID) -> u32 = mem::transmute(result);
+        let result = GetProcAddress(module_handle, s_loadlib.as_ptr() as _).unwrap();
 
         // Allocate the space to write the dll direction in the target process
         let addr = VirtualAllocEx(
@@ -38,7 +40,7 @@ pub fn inject_dll(process: &Process, name: &str) {
             dll_dir.len(),
             MEM_COMMIT,
             PAGE_READWRITE,
-        ) as DWORD_PTR;
+        ) as usize;
 
         process.write_aob(addr, &dll_dir, true);
 
@@ -48,8 +50,8 @@ pub fn inject_dll(process: &Process, name: &str) {
             process.h_process,
             ptr::null_mut(),
             0,
-            Some(casted_function),
-            addr as LPVOID,
+            Some(std::mem::transmute(result)),
+            addr as *const c_void,
             0,
             ptr::null_mut(),
         );
